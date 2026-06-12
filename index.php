@@ -64,23 +64,26 @@ if($action == "api"){
     // =========================
     // KPIS
     // =========================
-    $resVentasTotal = $conn->query("SELECT COALESCE(SUM(total),0) as total FROM ventas");
-    $ventasTotal = $resVentasTotal->fetch_assoc();
-    
-    $resClientes = $conn->query("SELECT COUNT(*) as total FROM clientes");
-    $clientesTotal = $resClientes->fetch_assoc();
-    
-    $resProductos = $conn->query("SELECT COUNT(*) as total FROM productos");
-    $productosTotal = $resProductos->fetch_assoc();
-    
-    $resEmpleados = $conn->query("SELECT COUNT(*) as total FROM empleados");
-    $empleadosTotal = $resEmpleados->fetch_assoc();
-    
     $kpis = [
-        "ventas" => (int)($ventasTotal['total'] ?? 0),
-        "clientes" => (int)($clientesTotal['total'] ?? 0),
-        "productos" => (int)($productosTotal['total'] ?? 0),
-        "empleados" => (int)($empleadosTotal['total'] ?? 0),
+        "ventas" => (int)($conn->query("
+            SELECT COALESCE(SUM(total),0)
+            FROM ventas
+        ")?->fetch_row()[0] ?? 0),
+
+        "clientes" => (int)($conn->query("
+            SELECT COUNT(*)
+            FROM clientes
+        ")?->fetch_row()[0] ?? 0),
+
+        "productos" => (int)($conn->query("
+            SELECT COUNT(*)
+            FROM productos
+        ")?->fetch_row()[0] ?? 0),
+
+        "empleados" => (int)($conn->query("
+            SELECT COUNT(*)
+            FROM empleados
+        ")?->fetch_row()[0] ?? 0),
     ];
 
     // =========================
@@ -466,7 +469,7 @@ Gastos
 <div class="topbar">
 <div>
 <h2>Panel de Administración</h2>
-<p>Sistema de Gestión Empresarial</p>
+<p>Sistema de Gestión de datos</p>
 </div>
 
 <div class="d-flex gap-2 align-items-center">
@@ -921,7 +924,11 @@ else:
 <form method="POST">
 
 <?php
-$res = $conn->query("SHOW COLUMNS FROM $view");
+if ($view !== 'dashboard') {
+
+    $res = $conn->query("SHOW COLUMNS FROM `$view`");
+
+}
 while($campo = $res->fetch_assoc()):
     if($campo['Field'] === "id") continue;
 ?>
