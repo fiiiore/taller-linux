@@ -2,6 +2,15 @@
 require_once __DIR__ . "/db.php";
 
 /* =====================================
+   FUNCIONES AUXILIARES
+===================================== */
+
+// Convierte nombres de columna (ej: "razon_social") en etiquetas legibles (ej: "Razon Social")
+function formatLabel($campo) {
+    return ucwords(str_replace('_', ' ', $campo));
+}
+
+/* =====================================
    CONFIGURACION GENERAL
 ===================================== */
 
@@ -102,7 +111,8 @@ if($action == "api"){
    ELIMINAR REGISTRO
 ===================================== */
 
-if (isset($_GET['delete'])) {
+// FIX: se excluye "dashboard" porque no es una tabla real de la base
+if (isset($_GET['delete']) && $view !== 'dashboard') {
 
     $id = (int) $_GET['delete'];
 
@@ -118,7 +128,7 @@ if (isset($_GET['delete'])) {
    GUARDAR NUEVO REGISTRO
 ===================================== */
 
-if (isset($_POST['guardar'])) {
+if (isset($_POST['guardar']) && $view !== 'dashboard') {
 
     $res = $conn->query("SHOW COLUMNS FROM $view");
 
@@ -127,15 +137,17 @@ if (isset($_POST['guardar'])) {
     $tipos = "";
     $valores = [];
 
-    while ($c = $res->fetch_assoc()) {
+    if ($res) {
+        while ($c = $res->fetch_assoc()) {
 
-        if ($c['Field'] === 'id') continue;
+            if ($c['Field'] === 'id') continue;
 
-        $columnas[] = $c['Field'];
-        $placeholders[] = "?";
+            $columnas[] = $c['Field'];
+            $placeholders[] = "?";
 
-        $tipos .= "s";
-        $valores[] = $_POST[$c['Field']] ?? "";
+            $tipos .= "s";
+            $valores[] = $_POST[$c['Field']] ?? "";
+        }
     }
 
     if (!empty($columnas)) {
@@ -158,36 +170,44 @@ if (isset($_POST['guardar'])) {
    EDITAR REGISTRO (UPDATE)
 ===================================== */
 
-if(isset($_POST['actualizar'])) {
+// FIX: ahora usa prepared statements en vez de concatenar el SQL a mano
+if (isset($_POST['actualizar']) && $view !== 'dashboard') {
 
     $id = (int) $_POST['id'];
 
     $res = $conn->query("SHOW COLUMNS FROM $view");
 
     $sets = [];
+    $tipos = "";
+    $valores = [];
 
-    while($c = $res->fetch_assoc()) {
+    if ($res) {
+        while ($c = $res->fetch_assoc()) {
 
-        if($c['Field'] === 'id') continue;
+            if ($c['Field'] === 'id') continue;
 
-        $campo = $c['Field'];
+            $campo = $c['Field'];
 
-        $valor = $conn->real_escape_string(
-            $_POST[$campo] ?? ''
-        );
-
-        $sets[] = "$campo='$valor'";
+            $sets[] = "$campo = ?";
+            $tipos .= "s";
+            $valores[] = $_POST[$campo] ?? '';
+        }
     }
 
     if (!empty($sets)) {
 
+        $tipos .= "i";
+        $valores[] = $id;
+
         $sql = "
             UPDATE $view
             SET " . implode(',', $sets) . "
-            WHERE id=$id
+            WHERE id = ?
         ";
 
-        $conn->query($sql);
+        $stmt = $conn->prepare($sql);
+        $stmt->bind_param($tipos, ...$valores);
+        $stmt->execute();
     }
 
     header("Location: index.php?view=$view");
@@ -200,16 +220,16 @@ if(isset($_POST['actualizar'])) {
 
 $fila_edicion = null;
 
-if(isset($_GET['edit'])){
+// FIX: también usa prepared statement para la consulta del registro a editar
+if (isset($_GET['edit']) && $view !== 'dashboard') {
 
     $id = (int) $_GET['edit'];
 
-    $res = $conn->query("
-        SELECT * 
-        FROM $view 
-        WHERE id=$id
-    ");
+    $stmt = $conn->prepare("SELECT * FROM $view WHERE id = ?");
+    $stmt->bind_param("i", $id);
+    $stmt->execute();
 
+    $res = $stmt->get_result();
     $fila_edicion = $res ? $res->fetch_assoc() : null;
 }
 
@@ -654,7 +674,7 @@ if ($q && $q->num_rows > 0):
 <?php if($campo === "id") continue; ?>
 
 <div class="mb-3">
-<label class="form-label"><?= ucfirst($campo) ?></label>
+<label class="form-label"><?= formatLabel($campo) ?></label>
 <input type="text" name="<?= htmlspecialchars($campo) ?>" value="<?= htmlspecialchars($valor) ?>" class="form-control">
 </div>
 
@@ -674,35 +694,35 @@ $datos_resumen = [];
 switch($view) {
     case 'clientes':
         $res = $conn->query("SELECT COUNT(*) as total FROM clientes");
-        $datos_resumen = $res->fetch_assoc();
+        $datos_resumen = $res ? $res->fetch_assoc() : ['total' => 0];
         break;
     case 'ventas':
         $res = $conn->query("SELECT COUNT(*) as total, COALESCE(SUM(total),0) as monto FROM ventas");
-        $datos_resumen = $res->fetch_assoc();
+        $datos_resumen = $res ? $res->fetch_assoc() : ['total' => 0, 'monto' => 0];
         $res2 = $conn->query("SELECT COALESCE(AVG(total),0) as promedio FROM ventas");
-        $prom = $res2->fetch_assoc();
+        $prom = $res2 ? $res2->fetch_assoc() : ['promedio' => 0];
         $datos_resumen['promedio'] = $prom['promedio'];
         break;
     case 'productos':
         $res = $conn->query("SELECT COUNT(*) as total, COALESCE(SUM(stock),0) as stock FROM productos");
-        $datos_resumen = $res->fetch_assoc();
+        $datos_resumen = $res ? $res->fetch_assoc() : ['total' => 0, 'stock' => 0];
         $res2 = $conn->query("SELECT COUNT(*) as bajo_stock FROM productos WHERE stock <= 10");
-        $bajo = $res2->fetch_assoc();
+        $bajo = $res2 ? $res2->fetch_assoc() : ['bajo_stock' => 0];
         $datos_resumen['bajo_stock'] = $bajo['bajo_stock'];
         break;
     case 'empleados':
         $res = $conn->query("SELECT COUNT(*) as total FROM empleados");
-        $datos_resumen = $res->fetch_assoc();
+        $datos_resumen = $res ? $res->fetch_assoc() : ['total' => 0];
         break;
     case 'proveedores':
         $res = $conn->query("SELECT COUNT(*) as total FROM proveedores");
-        $datos_resumen = $res->fetch_assoc();
+        $datos_resumen = $res ? $res->fetch_assoc() : ['total' => 0];
         break;
     case 'gastos':
         $res = $conn->query("SELECT COUNT(*) as total, COALESCE(SUM(monto),0) as monto FROM gastos");
-        $datos_resumen = $res->fetch_assoc();
+        $datos_resumen = $res ? $res->fetch_assoc() : ['total' => 0, 'monto' => 0];
         $res2 = $conn->query("SELECT COALESCE(AVG(monto),0) as promedio FROM gastos");
-        $prom = $res2->fetch_assoc();
+        $prom = $res2 ? $res2->fetch_assoc() : ['promedio' => 0];
         $datos_resumen['promedio'] = $prom['promedio'];
         break;
 }
@@ -740,7 +760,7 @@ switch($view) {
                 <div class="icon-circle green me-3"><i class="fa-solid fa-dollar-sign"></i></div>
                 <div>
                     <h6>Monto Total</h6>
-                    <h3>$<?= number_format($datos_resumen['monto'] ?? 0, 0) ?></h3>
+                    <h3>$<?= number_format($datos_resumen['monto'] ?? 0, 2) ?></h3>
                 </div>
             </div>
         </div>
@@ -751,7 +771,7 @@ switch($view) {
                 <div class="icon-circle purple me-3"><i class="fa-solid fa-chart-line"></i></div>
                 <div>
                     <h6>Promedio por Venta</h6>
-                    <h3>$<?= number_format($datos_resumen['promedio'] ?? 0, 0) ?></h3>
+                    <h3>$<?= number_format($datos_resumen['promedio'] ?? 0, 2) ?></h3>
                 </div>
             </div>
         </div>
@@ -836,7 +856,7 @@ switch($view) {
                 <div class="icon-circle orange me-3"><i class="fa-solid fa-dollar-sign"></i></div>
                 <div>
                     <h6>Monto Total Gastado</h6>
-                    <h3>$<?= number_format($datos_resumen['monto'] ?? 0, 0) ?></h3>
+                    <h3>$<?= number_format($datos_resumen['monto'] ?? 0, 2) ?></h3>
                 </div>
             </div>
         </div>
@@ -847,7 +867,7 @@ switch($view) {
                 <div class="icon-circle purple me-3"><i class="fa-solid fa-chart-bar"></i></div>
                 <div>
                     <h6>Gasto Promedio</h6>
-                    <h3>$<?= number_format($datos_resumen['promedio'] ?? 0, 0) ?></h3>
+                    <h3>$<?= number_format($datos_resumen['promedio'] ?? 0, 2) ?></h3>
                 </div>
             </div>
         </div>
@@ -869,10 +889,14 @@ switch($view) {
 <tr>
 <?php
 $res = $conn->query("SHOW COLUMNS FROM $view");
-while($col = $res->fetch_assoc()):
+if ($res):
+    while($col = $res->fetch_assoc()):
 ?>
-<th><?= ucfirst($col['Field']) ?></th>
-<?php endwhile; ?>
+<th><?= formatLabel($col['Field']) ?></th>
+<?php
+    endwhile;
+endif;
+?>
 <th>Acciones</th>
 </tr>
 </thead>
@@ -913,7 +937,11 @@ else:
 
 <!-- ============================================================
      MODAL NUEVO REGISTRO
+     FIX: todo el modal queda dentro de "$view !== 'dashboard'"
+     para que nunca se intente hacer SHOW COLUMNS FROM dashboard
 ============================================================ -->
+
+<?php if ($view !== 'dashboard'): ?>
 
 <div id="modal" class="modal-bg">
 
@@ -924,21 +952,22 @@ else:
 <form method="POST">
 
 <?php
-if ($view !== 'dashboard') {
+$res = $conn->query("SHOW COLUMNS FROM `$view`");
 
-    $res = $conn->query("SHOW COLUMNS FROM `$view`");
-
-}
-while($campo = $res->fetch_assoc()):
-    if($campo['Field'] === "id") continue;
+if ($res):
+    while($campo = $res->fetch_assoc()):
+        if($campo['Field'] === "id") continue;
 ?>
 
 <div class="mb-3">
-<label class="form-label"><?= ucfirst($campo['Field']) ?></label>
+<label class="form-label"><?= formatLabel($campo['Field']) ?></label>
 <input type="text" name="<?= htmlspecialchars($campo['Field']) ?>" class="form-control">
 </div>
 
-<?php endwhile; ?>
+<?php
+    endwhile;
+endif;
+?>
 
 <button type="submit" name="guardar" class="btn btn-success">Guardar</button>
 <button type="button" class="btn btn-secondary" onclick="document.getElementById('modal').style.display='none'">Cancelar</button>
@@ -948,6 +977,8 @@ while($campo = $res->fetch_assoc()):
 </div>
 
 </div>
+
+<?php endif; ?>
 
 <div class="footer">
 ERP Empresarial © <?= date("Y") ?>
